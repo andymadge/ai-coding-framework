@@ -22,15 +22,33 @@ This is an AI Coding Framework—a reusable template and methodology for orchest
 
 ### Key Files
 
-- `prompts/rubrics/STD-001-prompt-engineering-rubric.md` — Comprehensive evaluation standards, worked examples, and self-assessment checklist
+- `prompts/rubrics/STD-001-prompt-creation-rubric.md` — Comprehensive evaluation standards for Claude prompts, worked examples, and self-assessment checklist
+- `prompts/rubrics/STD-002-python-development-rubric.md` — Python development standards covering type hints, Pythonic patterns, testing, minimal documentation, security, and performance
 
 ### When Using This Framework in a Project
 
-1. Review `STD-001-prompt-engineering-rubric.md` to understand the framework
-2. Copy only the rubrics you need to the new project's `prompts/rubrics/` directory
+1. **For prompt design**: Review `STD-001-prompt-creation-rubric.md` to understand context compaction survival, large file handling, and prompt structure
+2. **For Python projects**: Review `STD-002-python-development-rubric.md` for coding standards (type hints, testing, minimal documentation, security)
+3. Copy only the rubrics you need to the new project's `prompts/rubrics/` directory
 
 Claude Code will handle the rest: creating manifest and progress files, generating prompts, managing execution, and checkpoint recovery.
 
+### Rubric Selection Guide
+
+- **All projects**: STD-001 for prompt engineering across any domain
+- **Python projects**: STD-002 for development standards covering type hints, error handling, testing, documentation, security, and performance
+- **Future**: Additional rubrics (STD-003, etc.) for other languages/domains as needed
+
 ### Creating New Prompts
 
-Copy the worked example from section 10 in `STD-001-prompt-engineering-rubric.md` and customize it for your task. Evaluate using the self-assessment checklist in section 11 (24 verification items covering structure, role targeting, compaction survival, context management, and quality attributes).
+Copy the worked example from section 11 in `STD-001-prompt-creation-rubric.md` and customize it for your task. Evaluate using the self-assessment checklist in section 12 covering structure, role targeting, compaction survival, context management, and quality attributes.
+
+### Python Development Guidelines
+
+For Python code contributions or reviews, consult `STD-002-python-development-rubric.md`:
+- **Type hints**: Required on all function signatures
+- **Documentation**: Minimal—only document non-obvious intent
+- **Testing**: Standard pytest patterns with Arrange-Act-Assert structure
+- **Code style**: Pythonic patterns, clear naming, single responsibility
+- **Security**: Input validation at boundaries, parameterized queries, no hardcoded secrets
+- **Self-assessment**: Use the 43-item checklist to evaluate code quality
