@@ -1,750 +1,935 @@
-# Prompt Engineering Rubric for Claude Code
+# Prompt Engineering Rubric for Claude Code Prompts
 
-This rubric defines standards for generating well-structured prompts that survive context compaction, enable resumable execution, and maintain project state across sessions.
+## Overview
+
+This rubric provides reusable patterns and templates for building robust Claude Code prompts that:
+- Survive context compaction across long-running tasks
+- Handle large files that exceed token limits
+- Maintain state and enable reliable resumption
+- Follow consistent structural patterns
+
+Use this document as a reference when creating new prompts or enhancing existing ones.
 
 ---
 
-## Quick Reference
+## Table of Contents
+
+1. [When to Use These Patterns](#when-to-use-these-patterns)
+2. [Core Principles](#core-principles)
+3. [Prompt Structure Template](#prompt-structure-template)
+4. [Context Compaction Survival Pattern](#context-compaction-survival-pattern)
+5. [Large File Handling Pattern](#large-file-handling-pattern)
+6. [Avoiding Arbitrary Limits Pattern](#avoiding-arbitrary-limits-pattern)
+7. [Progress Tracking Patterns](#progress-tracking-patterns)
+8. [Checkpoint Strategies](#checkpoint-strategies)
+9. [Begin Section Template](#begin-section-template)
+10. [Critical Reminders Template](#critical-reminders-template)
+11. [Customisation Guide](#customisation-guide)
+
+---
+
+## When to Use These Patterns
+
+### Always Include Context Compaction Survival When:
+- Task involves multiple phases or steps
+- Work will take more than 10-15 minutes of Claude time
+- Task involves reading/processing multiple source files
+- Output involves creating multiple files or documents
+- Task has natural checkpoint boundaries (phases, levels, personas, etc.)
+
+### Always Include Large File Handling When:
+- Source files may exceed 50KB
+- Working with QUINT specifications (often large)
+- Processing documentation sets
+- Reading architecture documents
+- Any task where you say "read all the files in..."
+
+### Skip These Patterns When:
+- Simple single-file transformations
+- Quick Q&A or analysis tasks
+- Tasks completable in a single response
+- No file I/O required
+
+---
+
+## Core Principles
+
+| Principle                           | Description                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **Disk Over Memory**                | Write everything to `.work/` directory; context will be lost but disk persists                   |
+| **Progress After Every Unit**       | Update `progress.yaml` after every significant work unit to enable resumption                    |
+| **Summarise Then Discard**          | For large files: read chunk → extract key info → write summary → forget chunk                    |
+| **Reference Not Re-read**           | Once summarised, reference the summary file; only re-read original for quotes                    |
+| **Clear Next Action**               | Always document exactly what to do next for cold resumption                                      |
+| **Check Before Starting**           | First action is always checking for existing progress; never restart completed work              |
+| **Complete Then Move**              | Finish one unit of work completely before starting another                                       |
+| **No Arbitrary Limits**             | NEVER use `head -N` or `tail -N` to limit file discovery; process ALL files or show count + warn |
+| **Separate Work from Deliverables** | `.work/` is for internal tracking; `docs/` is for final artifacts humans review                  |
+
+---
+
+## Output Directory Separation
+
+**Critical:** The `.work/` directory is for INTERNAL tracking only. Final deliverables must go to visible directories.
+
+### Directory Purposes
+
+| Directory              | Purpose                                | Visibility             | Contents                                        |
+| ---------------------- | -------------------------------------- | ---------------------- | ----------------------------------------------- |
+| **`.work/`**           | Internal tracking, compaction survival | Hidden (dot directory) | `progress.yaml`, inventories, intermediate data |
+| **`docs/qa-reports/`** | QA analysis deliverables               | Visible, reviewable    | `*-REPORT.md` files                             |
+| **`docs/analysis/`**   | Code analysis deliverables             | Visible, reviewable    | Analysis reports, findings                      |
+| **`docs/sysdocs/`**    | System documentation                   | Visible, reviewable    | Architecture, API, onboarding docs              |
+
+### Standard QA Output Structure
 
 ```
-prompts/
-├── manifest.yaml           # Execution order, parallelisation, dependencies
-├── 001-requirements.md     # First prompt in sequence
-├── 002-technical-design.md
-├── 003-implementation.md
-└── ...
+repository/
+├── .work/                              # INTERNAL - Never deliverables
+│   └── qa-analysis/
+│       └── {category}/
+│           ├── progress.yaml           # Compaction survival
+│           ├── *-inventory.yaml        # Intermediate data
+│           └── *-findings.yaml         # Raw findings
+│
+└── docs/                               # DELIVERABLES - Human review
+    └── qa-reports/
+        └── {category}/
+            └── {CATEGORY}-REPORT.md    # Final report
+```
 
+### Why This Matters
+
+1. **Dot directories are hidden** - Users won't find reports in file explorers
+2. **Source control** - Reports in `docs/` can be committed and tracked
+3. **CI/CD integration** - Pipelines can publish `docs/` artifacts easily
+4. **Clear separation** - Working state vs deliverables are obviously different
+
+---
+
+## Prompt Structure Template
+
+A well-structured Claude Code prompt follows this pattern:
+
+```xml
+# [PROMPT TITLE]
+
+<context>
+<project>[Project name and description]</project>
+<role>[What role Claude is playing]</role>
+<objective>[What this prompt achieves]</objective>
+</context>
+
+<foundational_principles>
+[Key principles that guide all work - numbered list]
+</foundational_principles>
+
+<context_compaction_survival>
+[See pattern below]
+</context_compaction_survival>
+
+<large_file_handling>
+[See pattern below]
+</large_file_handling>
+
+<methodology>
+[Phases and steps - the actual work to be done]
+</methodology>
+
+<output_specifications>
+[What files/artifacts to produce and their format]
+</output_specifications>
+
+<critical_reminders>
+[Key points that must not be forgotten - numbered list]
+</critical_reminders>
+
+<begin>
+[Instructions for starting/resuming work]
+</begin>
+```
+
+---
+
+## Context Compaction Survival Pattern
+
+### Template (Copy and Customise)
+
+```xml
+<context_compaction_survival>
+  <critical_warning>
+  THIS WORK WILL SPAN MULTIPLE CONTEXT COMPACTIONS.
+  [Description of why this task is extensive].
+  You WILL lose context multiple times during this work.
+  You MUST implement strategies to survive compaction and resume work correctly.
+  </critical_warning>
+  
+  <work_tracking_directory>
+    <path>[OUTPUT_DIR]/.work/</path>
+    <purpose>Persistent work state that survives context compaction</purpose>
+    <critical>Create this directory FIRST before any other work</critical>
+    
+    <required_files>
+      <file name="progress.yaml">
+        <purpose>Track current [phase/level/step] and exactly what to do next</purpose>
+        <updated>After EVERY [significant work unit], EVERY [milestone]</updated>
+        <critical>MUST be updated frequently - this is your resumption lifeline</critical>
+      </file>
+      
+      <file name="source-discovery.yaml">
+        <purpose>Complete catalogue of all source files with sizes</purpose>
+        <created>Phase 0 during discovery</created>
+        <used_by>All subsequent phases for source lookup</used_by>
+      </file>
+      
+      <!-- Add task-specific tracking files here -->
+      <file name="[task-specific].yaml">
+        <purpose>[What this tracks]</purpose>
+        <created>[When created]</created>
+        <format>[Format description]</format>
+      </file>
+      
+      <directory name="source-summaries/">
+        <purpose>Summary of each source file</purpose>
+        <created>During discovery phase</created>
+        <format>One .yaml per source document with key content extracted</format>
+      </directory>
+      
+      <directory name="large-file-summaries/">
+        <purpose>Chunked summaries of files too large to read at once</purpose>
+        <created>When large files encountered during discovery</created>
+        <format>One .yaml per large file with chunk-by-chunk summaries</format>
+      </directory>
+    </required_files>
+  </work_tracking_directory>
+  
+  <progress_tracking_schema>
+```yaml
+# progress.yaml - UPDATE AFTER EVERY SIGNIFICANT WORK UNIT
+progress:
+  last_updated: "[ISO DateTime]"
+  current_phase: "[Phase ID]"
+  current_step: "[Step ID]"
+  status: "In Progress | Blocked | Complete"
+  
+  # Task-specific phase tracking
+  phases:
+    phase_0_discovery:
+      status: "Not Started | In Progress | Complete"
+      # Phase-specific metrics
+      
+    phase_1_[name]:
+      status: "Not Started | In Progress | Complete"
+      # Phase-specific metrics
+      
+  # What's done
+  work_completed:
+    - item: "[Completed item]"
+      completed_at: "[DateTime]"
+      
+  # What's in progress
+  work_in_progress:
+    - item: "[Current item]"
+      status: "[What's done, what remains]"
+      
+  # What's remaining
+  work_remaining:
+    - "[List of pending items]"
+    
+  # Any blockers
+  blockers:
+    - "[Any issues preventing progress]"
+    
+  # CRITICAL: Exactly what to do next
+  next_action: "[EXACTLY what to do next when resuming - be specific]"
+```
+  </progress_tracking_schema>
+  
+  <resumption_protocol>
+  WHEN CONTEXT IS COMPACTED OR SESSION RESUMES:
+  
+  1. IMMEDIATELY check for existing progress:
+     ```bash
+     cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
+     ```
+     
+  2. IF progress file exists:
+     - Read current_phase, current_step
+     - Read next_action (this tells you EXACTLY what to do)
+     - Check which [phases/levels/items] are complete
+     - Load relevant .work/ files (source-discovery.yaml, summaries as needed)
+     - Resume from next_action - do NOT restart from beginning
+     - Do NOT re-read source files - use .work/ summaries
+     
+  3. IF no progress file (fresh start):
+     - Initialize .work/ directory structure
+     - Begin with Phase 0 (Discovery/Prerequisites)
+     
+  4. After each significant unit of work:
+     - Update progress.yaml immediately
+     - Write next_action clearly for potential resumption
+     
+  5. CHECKPOINT REQUIREMENTS:
+     - After EVERY [major deliverable created]
+     - After EVERY [phase/level] completed
+     - After EVERY [significant milestone]
+     - Before ANY [complex operation]
+  </resumption_protocol>
+  
+  <compaction_safe_practices>
+    <practice>Write progress.yaml after EVERY [significant work unit]</practice>
+    <practice>Write summaries to disk, don't keep in context memory</practice>
+    <practice>Reference .work/ files instead of re-reading large sources</practice>
+    <practice>Complete one [unit] fully before starting another</practice>
+    <practice>Document "next_action" with enough detail to resume cold</practice>
+    <practice>Use .work/*.yaml as source of truth, not context memory</practice>
+    <practice>Never rely on context to remember what [phases/levels] are done</practice>
+  </compaction_safe_practices>
+</context_compaction_survival>
+```
+
+### Customisation Points
+
+Replace these placeholders when using the template:
+
+| Placeholder               | Replace With                  | Examples                                |
+| ------------------------- | ----------------------------- | --------------------------------------- |
+| `[OUTPUT_DIR]`            | Actual output directory path  | `/home/ubuntu/src/project/docs/output`  |
+| `[significant work unit]` | What constitutes a checkpoint | "spec file", "ADR", "page", "component" |
+| `[phase/level/step]`      | Your task's hierarchy         | "phase", "level", "persona", "stage"    |
+| `[major deliverable]`     | Key outputs                   | "spec file", "document", "verification" |
+| `[task-specific].yaml`    | Additional tracking files     | "level-status.yaml", "adr-index.yaml"   |
+
+---
+
+## Large File Handling Pattern
+
+### Template (Copy and Customise)
+
+```xml
+<large_file_handling>
+  <critical_warning>
+  Some [file type] may exceed token limits and cannot be read in one operation.
+  This is especially likely for:
+  - [List of file types that tend to be large]
+  - [Another type]
+  - [Another type]
+  You MUST detect and handle large files appropriately.
+  </critical_warning>
+  
+  <detection_strategy>
+  During [discovery phase]:
+  
+  1. Get file sizes for ALL source files:
+     ```bash
+     find [SOURCE_DIR] -type f \( -name "*.md" -o -name "*.qnt" -o -name "*.yaml" \) -exec ls -la {} \;
+     ```
+     
+  2. Categorise by size:
+     - Small: < 50KB (safe to read entirely)
+     - Medium: 50-100KB (usually OK, monitor for truncation)
+     - Large: > 100KB (requires chunked reading)
+     
+  3. For large files, calculate estimated chunks:
+     - Assume ~300-500 lines per chunk as safe default
+     - Use: wc -l [file] to get line count
+     - Denser content (specs, code) → smaller chunks (~300 lines)
+     - Prose content (docs) → larger chunks (~500 lines)
+     
+  4. Record in source-discovery.yaml:
+```yaml
+source_files:
+  - file: "[filename]"
+    path: "[full path]"
+    size_bytes: [size]
+    size_category: "small | medium | large"
+    line_count: [lines]
+    requires_chunked_reading: true | false
+    estimated_chunks: [N]  # if large
+    content_type: "[description of content]"
+    
+  large_files_summary:
+    count: [N]
+    total_size_mb: [size]
+    files:
+      - "[filename1]"
+      - "[filename2]"
+```
+  </detection_strategy>
+  
+  <chunked_reading_strategy>
+  For files marked as "large":
+  
+  1. Read file in sections using line ranges:
+     ```
+     view /path/to/file.md [1, 300]
+     view /path/to/file.md [301, 600]
+     view /path/to/file.md [601, 900]
+     # etc.
+     ```
+     
+  2. After reading EACH chunk, immediately extract:
+     - [Key item type 1 relevant to your task]
+     - [Key item type 2]
+     - [Key item type 3]
+     - Cross-references to other files
+     
+  3. Write chunk summary to large-file-summaries/:
+```yaml
+# large-file-summaries/[FILE_ID].yaml
+file: "[filename]"
+path: "[full path]"
+total_lines: [N]
+total_chunks: [N]
+chunks_processed: [N]
+fully_summarised: true | false
+
+chunk_summaries:
+  - chunk: 1
+    lines: "1-300"
+    content_type: "[What this chunk contains]"
+    key_items:
+      - "[Item 1]"
+      - "[Item 2]"
+    # Task-specific extracted data
+    [custom_field]:
+      - [extracted data]
+      
+  - chunk: 2
+    lines: "301-600"
+    content_type: "[What this chunk contains]"
+    key_items:
+      - "[Item 3]"
+    # ... continue pattern
+
+aggregate_summary:
+  total_[items]: [N]
+  by_category:
+    [category1]: [N]
+    [category2]: [N]
+  key_topics:
+    - "[Topic 1]"
+    - "[Topic 2]"
+```
+  </chunked_reading_strategy>
+  
+  <using_summaries_for_work>
+  When doing work that references large files:
+  
+  1. FIRST: Read the summary from large-file-summaries/ (small file, fits in context)
+  
+  2. Use aggregate_summary for high-level information
+  
+  3. If specific detail needed:
+     - Check chunk_summaries to find which chunk has the content
+     - Read ONLY that chunk: view [file] [start, end]
+     - Extract the specific [item] needed
+     - Do NOT keep entire file in context
+     
+  4. Cite using file + chunk reference:
+     "[Source: [filename], Chunk N, Lines X-Y]"
+     
+  5. For comprehensive outputs:
+     - Use aggregate_summary from the summary file
+     - Pull specific details chunk by chunk as needed
+     - Write output incrementally, saving after each section
+     - If compacted, resume from saved progress
+  </using_summaries_for_work>
+  
+  <memory_efficient_patterns>
+    <pattern name="Summarise then discard">
+      Read chunk → Extract key info → Write to summary file → Move to next chunk
+      Don't try to keep entire large file in context.
+    </pattern>
+    
+    <pattern name="Reference not re-read">
+      Once summarised, reference the summary file.
+      Only re-read original when exact wording/syntax needed.
+    </pattern>
+    
+    <pattern name="Incremental output building">
+      For outputs requiring large file content:
+      - Write output section by section
+      - Save after each section
+      - Update progress.yaml with what's done
+      - If compacted, resume from saved progress
+    </pattern>
+    
+    <pattern name="Targeted chunk access">
+      Need specific item? Don't re-read whole file.
+      1. Read summary to find which chunk has it
+      2. Read only that chunk
+      3. Extract what you need
+      4. Discard chunk from context
+    </pattern>
+  </memory_efficient_patterns>
+</large_file_handling>
+```
+
+### Size Thresholds Reference
+
+| Category | Size     | Line Count (est.) | Handling                                             |
+| -------- | -------- | ----------------- | ---------------------------------------------------- |
+| Small    | < 50KB   | < 800 lines       | Read entirely, still summarise to disk               |
+| Medium   | 50-100KB | 800-1500 lines    | Usually OK, summarise anyway, monitor for truncation |
+| Large    | > 100KB  | > 1500 lines      | **Chunked reading mandatory**                        |
+
+### Chunk Size Recommendations
+
+| Content Type      | Lines per Chunk | Rationale                 |
+| ----------------- | --------------- | ------------------------- |
+| QUINT specs       | 300-400         | Dense, many definitions   |
+| Code files        | 300-400         | Dense, need context       |
+| Markdown docs     | 400-500         | Prose is less dense       |
+| YAML/JSON         | 200-300         | Structured, easy to break |
+| Architecture docs | 300-400         | Mixed content             |
+
+---
+
+## Avoiding Arbitrary Limits Pattern
+
+### The Problem
+
+Arbitrary limits like `head -20` or `tail -50` in file discovery cause **silent data loss**:
+- Files beyond the limit are never processed
+- Verification passes on partial data
+- Issues in truncated files go undetected
+- As the project grows, more data is silently dropped
+
+### The Rule: NEVER Truncate File Discovery
+
+```bash
+# ❌ DANGEROUS - Silent data loss
+for file in $(find . -name "*.cs" | head -50); do
+  process "$file"
+done
+
+# ❌ DANGEROUS - Verifies only 20 of potentially 500+ files
+for file in $(find "$DIR" -name "*.g.cs" | head -20); do
+  verify "$file"
+done
+```
+
+### Safe Patterns
+
+#### Pattern 1: Process ALL Files (Preferred)
+```bash
+# ✅ SAFE - Processes everything
+for file in $(find . -name "*.cs"); do
+  process "$file"
+done
+```
+
+#### Pattern 2: Show Count + Process All
+```bash
+# ✅ SAFE - Transparent about volume
+TOTAL=$(find . -name "*.cs" | wc -l)
+echo "Processing $TOTAL files..."
+PROCESSED=0
+for file in $(find . -name "*.cs"); do
+  ((PROCESSED++))
+  echo "[$PROCESSED/$TOTAL] $(basename "$file")"
+  process "$file"
+done
+```
+
+#### Pattern 3: Warn if Multiple When Expecting Single
+```bash
+# ✅ SAFE - Use when you expect exactly one file
+COUNT=$(find "$DIR" -maxdepth 1 -name "*.csproj" | wc -l)
+if [ "$COUNT" -eq 0 ]; then
+  echo "ERROR: No .csproj found in $DIR"
+  exit 1
+elif [ "$COUNT" -gt 1 ]; then
+  echo "WARNING: Multiple .csproj files in $DIR:"
+  find "$DIR" -maxdepth 1 -name "*.csproj"
+  echo "Using first one - verify this is correct"
+fi
+FILE=$(find "$DIR" -maxdepth 1 -name "*.csproj" | head -1)
+```
+
+#### Pattern 4: Explicit Sampling (When Justified)
+```bash
+# ✅ ACCEPTABLE - Only when full processing is impossible
+# Must be explicitly justified and transparent
+TOTAL=$(find . -name "*.cs" | wc -l)
+SAMPLE_SIZE=100
+
+if [ "$TOTAL" -gt "$SAMPLE_SIZE" ]; then
+  echo "⚠️ SAMPLING: Checking $SAMPLE_SIZE of $TOTAL files (random sample)"
+  echo "   Full verification would take too long"
+  FILES=$(find . -name "*.cs" | shuf | head -$SAMPLE_SIZE)
+else
+  FILES=$(find . -name "*.cs")
+fi
+
+for file in $FILES; do
+  verify "$file"
+done
+```
+
+### When head -1 IS Safe
+
+`head -1` is acceptable when extracting a **single value**, not when limiting results:
+
+```bash
+# ✅ SAFE - Extracting single value from command output
+JAVA_VERSION=$(java -version 2>&1 | head -1)
+
+# ✅ SAFE - Parsing YAML for specific field
+STATUS=$(grep "status:" progress.yaml | head -1 | awk '{print $2}')
+
+# ✅ SAFE - Getting first match from grep (intentional)
+FIRST_ERROR=$(grep "ERROR" build.log | head -1)
+```
+
+### When tail -N IS Safe
+
+`tail -N` is acceptable for **display purposes** (showing recent output):
+
+```bash
+# ✅ SAFE - Display only, not processing
+echo "Last 20 lines of build output:"
+cat build.log | tail -20
+
+# ✅ SAFE - Showing test summary
+quint test spec.qnt 2>&1 | tail -20
+```
+
+### Checklist for Prompt Authors
+
+Before finalising any prompt, verify:
+
+- [ ] No `head -N` (N>1) in any `find` pipeline
+- [ ] No `tail -N` limiting file discovery
+- [ ] All file loops process complete results
+- [ ] Any single-file selection (`head -1`) warns if multiple found
+- [ ] Sampling is explicit, justified, and transparent
+- [ ] File counts are displayed before processing
+
+### Real-World Impact
+
+| Pattern             | Files Found | Files Processed | Data Loss |
+| ------------------- | ----------- | --------------- | --------- |
+| `find \| head -20`  | 509         | 20              | **96%**   |
+| `find \| head -50`  | 509         | 50              | **90%**   |
+| `find \| head -100` | 509         | 100             | **80%**   |
+| `find` (no limit)   | 509         | 509             | **0%**    |
+
+---
+
+## Progress Tracking Patterns
+
+### Basic Progress.yaml Structure
+
+```yaml
+progress:
+  last_updated: "2025-01-06T10:30:00Z"
+  current_phase: "2"
+  current_step: "2.3"
+  status: "In Progress"
+  
+  phases:
+    phase_0:
+      status: "Complete"
+      completed_at: "2025-01-06T09:00:00Z"
+    phase_1:
+      status: "Complete"
+      completed_at: "2025-01-06T10:00:00Z"
+    phase_2:
+      status: "In Progress"
+      steps_completed: ["2.1", "2.2"]
+      current_step: "2.3"
+      
+  work_completed:
+    - item: "Source discovery"
+      completed_at: "2025-01-06T09:00:00Z"
+    - item: "File summaries"
+      completed_at: "2025-01-06T09:30:00Z"
+      
+  work_in_progress:
+    - item: "Component design - Payment service"
+      status: "API defined, implementation pending"
+      
+  work_remaining:
+    - "Component design - Notification service"
+    - "Integration testing specs"
+    - "Documentation"
+    
+  blockers: []
+  
+  next_action: "Complete Payment service implementation in phase 2, step 2.3. Read existing API from .work/payment-api.yaml and generate implementation."
+```
+
+### Task-Specific Progress Extensions
+
+#### For Multi-Level Tasks (like 01c cross-context testing)
+```yaml
+levels:
+  level_1:
+    status: "Complete"
+    specs_created: 5
+    counterexamples_found: 2
+  level_2:
+    status: "In Progress"
+    current_context: "Pipeline"
+```
+
+#### For Multi-Persona Tasks (like 01f verification)
+```yaml
+personas:
+  security_architect:
+    status: "Complete"
+    findings_critical: 1
+    findings_high: 3
+  cost_analyst:
+    status: "In Progress"
+    sections_reviewed: 3
+```
+
+#### For Multi-Phase Architecture (like 01e)
+```yaml
+phases:
+  discovery:
+    status: "Complete"
+  high_level:
+    status: "Complete"
+    adrs_created: 5
+  detailed:
+    status: "In Progress"
+    components_designed: 3
+    components_remaining: 4
+```
+
+---
+
+## Checkpoint Strategies
+
+### When to Checkpoint
+
+| Event                          | Action                               |
+| ------------------------------ | ------------------------------------ |
+| Phase/Level/Step completed     | Update progress.yaml, write summary  |
+| Major deliverable created      | Update progress.yaml, note file path |
+| Significant finding discovered | Write to findings file immediately   |
+| Before complex operation       | Save current state                   |
+| After 5-10 minutes of work     | Quick progress.yaml update           |
+
+### Checkpoint File Naming
+
+```
 .work/
-└── progress.yaml           # Progress tracking, decisions, outputs
+├── progress.yaml                    # Always present
+├── source-discovery.yaml            # After discovery
+├── [phase]-checkpoint.yaml          # After each phase
+├── [level]-checkpoint.yaml          # After each level
+├── source-summaries/
+│   └── [FILE_ID].yaml              # Per source file
+├── large-file-summaries/
+│   └── [FILE_ID].yaml              # Per large file
+└── [task-specific]/
+    └── [task-specific-files].yaml  # As needed
 ```
 
 ---
 
-## 1. Prompt File Structure
+## Begin Section Template
 
-Each prompt file must follow this XML-structured format:
+Use this template for the `<begin>` section of any prompt:
 
-```markdown
-# [NNN] [Descriptive Title]
+```xml
+<begin>
+=====================================
+CRITICAL: CHECK FOR EXISTING PROGRESS FIRST
+=====================================
+This work may have been started before context compaction.
 
-<prompt_metadata>
-  <id>NNN</id>
-  <name>descriptive-kebab-case-name</name>
-  <category>requirements|planning|design|bdd|tdd|implementation|review|documentation</category>
-  <estimated_effort>small|medium|large</estimated_effort>
-</prompt_metadata>
+FIRST ACTION - Check for existing progress:
+```bash
+cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
+```
 
-<prerequisites>
-  <prompt id="NNN">Description of what must be complete</prompt>
-  <artifact path="relative/path">Description of required artifact</artifact>
-  <state_check path=".work/progress.yaml" key="some.key" value="expected_value"/>
-</prerequisites>
+IF progress file exists:
+- Read current_phase, current_step, next_action
+- Resume from where you left off
+- Do NOT restart from beginning
+- Use .work/ summaries, not re-reading sources
 
-<context>
-  <persistent>
-    <!-- References to project-level context files -->
-    <file path="CLAUDE.md" sections="conventions,architecture"/>
-    <file path="docs/adr/001-tech-stack.md"/>
-  </persistent>
-  <session>
-    <!-- Current task state -->
-    <file path=".work/progress.yaml"/>
-  </session>
-  <inline>
-    <!-- Minimal context needed for this specific prompt -->
-    Any brief context that doesn't warrant a separate file.
-  </inline>
-</context>
+IF no progress file (fresh start):
+- Proceed with Phase 0 (Discovery/Prerequisites)
+- Create .work/ directory structure first
 
-<role>
-  <identity>[Specific expert role, e.g., "Senior API Architect", "Security Engineer"]</identity>
-  <expertise>[Key skills and knowledge areas relevant to this task]</expertise>
-  <mindset>[How this role approaches problems, what they prioritise]</mindset>
-</role>
+=====================================
+CRITICAL: COMPACTION SURVIVAL
+=====================================
+This work WILL span multiple context compactions.
 
-<objective>
-  Clear, single-sentence statement of what this prompt accomplishes.
-</objective>
+ALWAYS:
+- Write progress to .work/progress.yaml after each significant step
+- Write summaries to .work/ directories, not to context memory
+- Complete one unit of work fully before starting another
+- Document next_action clearly for resumption
 
-<instructions>
-  <step id="1">
-    <action>Specific action to take</action>
-    <checkpoint>What to write to progress.yaml after this step</checkpoint>
-  </step>
-  <step id="2">
-    <action>Next action</action>
-    <output artifact="NNN-output-name.ext">Description of artifact to create</output>
-    <checkpoint>State update</checkpoint>
-  </step>
-</instructions>
+=====================================
+CRITICAL: LARGE FILE HANDLING
+=====================================
+Some source files exceed token limits.
 
-<outputs>
-  <artifact path="NNN-output-name.ext" type="specification|code|test|documentation">
-    Description of this output
-  </artifact>
-  <state_update>
-    key.to.update: new_value
-    another.key: value
-  </state_update>
-</outputs>
+For files >100KB:
+- Read in chunks of ~300-500 lines
+- Summarise each chunk immediately
+- Write to .work/large-file-summaries/
+- Use summaries for subsequent work, not re-reading original
 
-<verification>
-  <criterion>How to verify this prompt completed successfully</criterion>
-  <criterion>Another verification check</criterion>
-</verification>
+=====================================
+BEGIN NOW
+=====================================
+FIRST: Check for existing progress (see command above)
 
-<on_failure>
-  <condition trigger="description of failure scenario">
-    <action>What to do</action>
-    <escalation>When to stop and ask for human input</escalation>
-  </condition>
-</on_failure>
+IF resuming: Follow next_action from progress.yaml
 
-<next_prompts>
-  <prompt id="NNN+1" condition="default">Next prompt in sequence</prompt>
-  <prompt id="NNN+2" condition="if some condition">Alternative path</prompt>
-</next_prompts>
+IF fresh start: 
+1. Create .work/ directory structure
+2. Run discovery on source files
+3. Proceed with Phase 0
+
+[Add any task-specific starting instructions here]
+</begin>
 ```
 
 ---
 
-## 2. Manifest File Structure
+## Critical Reminders Template
 
-The `prompts/manifest.yaml` defines execution order and dependencies:
+Use this template for the `<critical_reminders>` section:
 
-```yaml
-version: "1.0"
-project: project-name
-description: Brief description of this prompt sequence
+```xml
+<critical_reminders>
+================================================================================
+                    CRITICAL REMINDERS
+================================================================================
 
-execution:
-  - group: 1
-    prompts:
-      - id: "001"
-        name: requirements-gathering
-        file: 001-requirements.md
-        
-  - group: 2
-    prompts:
-      - id: "002"
-        name: technical-design
-        file: 002-technical-design.md
-        depends_on: ["001"]
-        
-  - group: 3
-    parallel: true  # These can run concurrently
-    prompts:
-      - id: "003"
-        name: api-specification
-        file: 003-api-specification.md
-        depends_on: ["002"]
-      - id: "004"
-        name: database-schema
-        file: 004-database-schema.md
-        depends_on: ["002"]
-        
-  - group: 4
-    prompts:
-      - id: "005"
-        name: implementation
-        file: 005-implementation.md
-        depends_on: ["003", "004"]
+1. **STATE IN FILES, NOT CONTEXT**
+   - progress.yaml is truth
+   - Context may compact any time
+   - Checkpoint after every [significant unit]
 
-categories:
-  requirements:
-    prompts: ["001"]
-  planning:
-    prompts: ["002"]
-  design:
-    prompts: ["003", "004"]
-  implementation:
-    prompts: ["005"]
+2. **CHECK BEFORE STARTING**
+   - Always read progress.yaml first
+   - Resume from next_action if exists
+   - Never restart completed work
 
-bdd_tdd_enabled: false  # Set true to enforce test-first workflow
+3. **LARGE FILES NEED CHUNKING**
+   - Files >100KB require chunked reading
+   - Summarise to .work/ as you go
+   - Reference summaries, not originals
+
+4. **COMPLETE BEFORE MOVING ON**
+   - Finish one [unit] before starting another
+   - Write checkpoint before transitions
+   - Document what comes next
+
+5. **[TASK-SPECIFIC REMINDER 1]**
+   - [Details]
+
+6. **[TASK-SPECIFIC REMINDER 2]**
+   - [Details]
+
+[Add more task-specific reminders as needed]
+
+</critical_reminders>
 ```
 
 ---
 
-## 3. State File Structure
+## Customisation Guide
 
-The `.work/progress.yaml` tracks progress and decisions:
+### Step 1: Determine Task Characteristics
 
-```yaml
-meta:
-  project: project-name
-  manifest: prompts/manifest.yaml
-  created_at: 2025-01-24T10:00:00Z
-  last_updated: 2025-01-24T14:30:00Z
-  last_prompt_completed: "002"
+Answer these questions:
+1. How many phases/levels/steps? → Determines progress structure
+2. What are the major deliverables? → Determines checkpoint triggers
+3. What source files are involved? → Determines large file handling
+4. What task-specific state needs tracking? → Determines additional .work/ files
 
-prompts:
-  "001":
-    status: completed  # pending|in_progress|completed|failed|skipped
-    started_at: 2025-01-24T10:00:00Z
-    completed_at: 2025-01-24T10:45:00Z
-    artifacts_created:
-      - path: 001-output-requirements.md
-        verified: true
-    decisions:
-      - id: d001
-        description: "Chose PostgreSQL over MySQL for JSON support"
-        rationale: "Better JSONB performance for our use case"
-        
-  "002":
-    status: completed
-    started_at: 2025-01-24T11:00:00Z
-    completed_at: 2025-01-24T12:30:00Z
-    artifacts_created:
-      - path: 002-output-technical-design.md
-        verified: true
-    decisions:
-      - id: d002
-        description: "REST over GraphQL"
-        rationale: "Team familiarity, simpler caching"
+### Step 2: Customise Progress Tracking
 
-  "003":
-    status: in_progress
-    started_at: 2025-01-24T14:00:00Z
-    current_step: 2
-    checkpoints:
-      - step: 1
-        completed_at: 2025-01-24T14:15:00Z
-        note: "Identified 12 API endpoints"
+Based on your task structure:
+- **Linear phases**: Use `phase_0`, `phase_1`, etc.
+- **Levels**: Use `level_1`, `level_2`, etc.
+- **Personas/Actors**: Use named personas
+- **Parallel work streams**: Use named work streams
 
-errors:
-  - prompt_id: "003"
-    step: 2
-    timestamp: 2025-01-24T14:30:00Z
-    error: "Ambiguous requirement for authentication flow"
-    resolution: pending  # pending|resolved|escalated
+### Step 3: Customise Large File Handling
 
-context_summary:
-  tech_stack:
-    language: Java 21
-    framework: Spring Boot 3.x
-    database: PostgreSQL 15
-  key_decisions:
-    - "d001: PostgreSQL for JSON support"
-    - "d002: REST API design"
-  current_focus: "API specification for user management endpoints"
-```
+Based on your source files:
+- **QUINT specs**: Extract invariants, state machines, types
+- **Architecture docs**: Extract decisions, components, constraints
+- **Requirements**: Extract requirements, acceptance criteria
+- **Code files**: Extract interfaces, key functions, dependencies
+
+### Step 4: Add Task-Specific Tracking
+
+Common additions:
+- `counterexamples.yaml` - For verification tasks
+- `adr-index.yaml` - For architecture tasks
+- `findings.yaml` - For review/audit tasks
+- `[entity]-status.yaml` - For multi-entity tasks
+
+### Step 5: Test Resumption
+
+Before finalising a prompt:
+1. Run it until partway through
+2. Simulate compaction (start fresh context)
+3. Verify it resumes correctly from progress.yaml
+4. Verify it uses summaries instead of re-reading files
 
 ---
 
-## 4. Rubric Evaluation Criteria
+## Quick Reference Card
 
-Use this checklist to evaluate prompt quality:
+### First Action (Always)
+```bash
+cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
+```
 
-### 4.1 Structure (Required)
+### Directory Structure
+```
+.work/
+├── progress.yaml           # ALWAYS - update frequently
+├── source-discovery.yaml   # ALWAYS - file catalogue
+├── source-summaries/       # Per-file summaries
+├── large-file-summaries/   # Chunked summaries
+└── [task-specific]/        # As needed
+```
 
-| Criterion | Weight | Description |
-|-----------|--------|-------------|
-| Has valid metadata | ★★★ | Includes id, name, category, effort estimate |
-| Role is specific | ★★★ | Targeted expert identity, not generic "assistant" |
-| Prerequisites defined | ★★★ | Lists required prompts, artifacts, state checks |
-| Clear objective | ★★★ | Single sentence describing outcome |
-| Numbered steps | ★★★ | Each step has action and checkpoint |
-| Outputs specified | ★★★ | Artifacts named with NNN prefix |
-| Verification criteria | ★★☆ | How to confirm success |
-| Failure handling | ★★☆ | What to do when things go wrong |
+### Size Thresholds
+- Small: < 50KB → Read entirely
+- Medium: 50-100KB → Monitor for truncation
+- Large: > 100KB → **Chunk required**
 
-### 4.2 Role Targeting (Required)
+### Checkpoint Triggers
+- After every major deliverable
+- After every phase/level complete
+- After every 5-10 minutes of work
+- Before any complex operation
 
-| Criterion | Weight | Description |
-|-----------|--------|-------------|
-| Specific identity | ★★★ | Named expertise, not "helpful assistant" or "AI" |
-| Relevant expertise | ★★★ | Skills directly applicable to the task |
-| Clear mindset | ★★☆ | How this role thinks and prioritises |
-| Appropriate seniority | ★★☆ | Junior/mid/senior matches task complexity |
-| Domain alignment | ★★☆ | Role matches the prompt category |
-
-### 4.3 Compaction Survival (Critical)
-
-| Criterion | Weight | Description |
-|-----------|--------|-------------|
-| Checkpoints after decisions | ★★★ | Every significant decision writes to progress.yaml |
-| Checkpoints after subtasks | ★★★ | Progress saved incrementally |
-| No implicit state | ★★★ | All important context in files, not memory |
-| Resumable from any step | ★★★ | Can continue after interruption |
-| State file read first | ★★★ | Prompt begins by loading .work/progress.yaml |
-
-### 4.4 Context Management (Required)
-
-| Criterion | Weight | Description |
-|-----------|--------|-------------|
-| References persistent context | ★★★ | Points to CLAUDE.md, ADRs, etc. |
-| Loads session state | ★★★ | Reads .work/progress.yaml |
-| Minimal inline context | ★★☆ | Only essential info embedded |
-| No duplicated context | ★★☆ | References files rather than copying |
-
-### 4.5 Quality Attributes (Required)
-
-| Criterion | Weight | Description |
-|-----------|--------|-------------|
-| Idempotent | ★★★ | Running twice doesn't break things |
-| Traceable | ★★☆ | Outputs link to inputs and decisions |
-| Self-contained | ★★☆ | Prompt + referenced files = complete |
-| Appropriately scoped | ★★☆ | Not too large, not too granular |
-
-### 4.6 BDD/TDD Integration (When Enabled)
-
-| Criterion | Weight | Description |
-|-----------|--------|-------------|
-| Test prompt precedes implementation | ★★★ | Code prompts require test prompts complete |
-| Acceptance criteria in BDD format | ★★☆ | Given/When/Then for features |
-| Test artifacts verified | ★★☆ | Tests exist before implementation runs |
+### Memory Patterns
+1. Summarise then discard
+2. Reference not re-read
+3. Incremental output building
+4. Targeted chunk access
 
 ---
 
-## 5. Prompt Categories
+## Version History
 
-### 5.1 Requirements Gathering
-
-```xml
-<category_guidance name="requirements">
-  <purpose>Capture and clarify what needs to be built</purpose>
-  <suggested_roles>
-    <role>Business Analyst with [domain] expertise</role>
-    <role>Product Manager with technical background</role>
-    <role>Requirements Engineer specialising in [domain]</role>
-  </suggested_roles>
-  <typical_outputs>
-    <output>Requirements specification</output>
-    <output>User stories or use cases</output>
-    <output>Acceptance criteria</output>
-    <output>Questions for stakeholders</output>
-  </typical_outputs>
-  <key_checkpoints>
-    <checkpoint>Core requirements identified</checkpoint>
-    <checkpoint>Ambiguities documented</checkpoint>
-    <checkpoint>Scope boundaries defined</checkpoint>
-  </key_checkpoints>
-</category_guidance>
-```
-
-### 5.2 Technical Planning
-
-```xml
-<category_guidance name="planning">
-  <purpose>Define technical approach and architecture</purpose>
-  <suggested_roles>
-    <role>Solution Architect with [tech stack] expertise</role>
-    <role>Technical Lead experienced in [domain]</role>
-    <role>Enterprise Architect for cross-cutting concerns</role>
-  </suggested_roles>
-  <typical_outputs>
-    <output>Technical design document</output>
-    <output>Architecture Decision Records (ADRs)</output>
-    <output>Component diagrams</output>
-    <output>Technology selections</output>
-  </typical_outputs>
-  <key_checkpoints>
-    <checkpoint>Architecture pattern selected</checkpoint>
-    <checkpoint>Key technical decisions recorded</checkpoint>
-    <checkpoint>Integration points identified</checkpoint>
-  </key_checkpoints>
-</category_guidance>
-```
-
-### 5.3 BDD (When Applicable)
-
-```xml
-<category_guidance name="bdd">
-  <purpose>Define behaviour specifications before implementation</purpose>
-  <suggested_roles>
-    <role>QA Engineer with BDD expertise</role>
-    <role>Test Architect specialising in behaviour-driven design</role>
-    <role>Business Analyst bridging requirements to scenarios</role>
-  </suggested_roles>
-  <typical_outputs>
-    <output>Feature files (Gherkin)</output>
-    <output>Scenario outlines</output>
-    <output>Step definitions skeleton</output>
-  </typical_outputs>
-  <key_checkpoints>
-    <checkpoint>Happy path scenarios defined</checkpoint>
-    <checkpoint>Edge cases identified</checkpoint>
-    <checkpoint>Acceptance criteria mapped to scenarios</checkpoint>
-  </key_checkpoints>
-  <enforcement>
-    When bdd_tdd_enabled: true in manifest, implementation prompts 
-    must have corresponding BDD prompts completed first.
-  </enforcement>
-</category_guidance>
-```
-
-### 5.4 TDD (When Applicable)
-
-```xml
-<category_guidance name="tdd">
-  <purpose>Write tests before implementation code</purpose>
-  <suggested_roles>
-    <role>Test Engineer with [language/framework] expertise</role>
-    <role>Senior Developer practising test-first development</role>
-    <role>Quality Engineer focusing on testability</role>
-  </suggested_roles>
-  <typical_outputs>
-    <output>Unit test files</output>
-    <output>Integration test files</output>
-    <output>Test fixtures and mocks</output>
-  </typical_outputs>
-  <key_checkpoints>
-    <checkpoint>Test cases for requirements identified</checkpoint>
-    <checkpoint>Tests written and failing</checkpoint>
-    <checkpoint>Test infrastructure in place</checkpoint>
-  </key_checkpoints>
-  <enforcement>
-    When bdd_tdd_enabled: true in manifest, implementation prompts 
-    must have corresponding TDD prompts completed first.
-  </enforcement>
-</category_guidance>
-```
-
-### 5.5 Implementation
-
-```xml
-<category_guidance name="implementation">
-  <purpose>Write production code</purpose>
-  <suggested_roles>
-    <role>Senior [Language] Developer with [framework] experience</role>
-    <role>Backend Engineer specialising in [domain]</role>
-    <role>Full-Stack Developer for end-to-end features</role>
-  </suggested_roles>
-  <typical_outputs>
-    <output>Source code files</output>
-    <output>Configuration files</output>
-    <output>Database migrations</output>
-  </typical_outputs>
-  <key_checkpoints>
-    <checkpoint>Core logic implemented</checkpoint>
-    <checkpoint>Error handling added</checkpoint>
-    <checkpoint>Code compiles/runs</checkpoint>
-    <checkpoint>Tests pass (if TDD enabled)</checkpoint>
-  </key_checkpoints>
-</category_guidance>
-```
-
-### 5.6 Code Review
-
-```xml
-<category_guidance name="review">
-  <purpose>Evaluate code quality and correctness</purpose>
-  <suggested_roles>
-    <role>Senior Developer with code review expertise</role>
-    <role>Tech Lead enforcing team standards</role>
-    <role>Security Engineer for security-focused review</role>
-    <role>Performance Engineer for optimisation review</role>
-  </suggested_roles>
-  <typical_outputs>
-    <output>Review comments/findings</output>
-    <output>Refactoring suggestions</output>
-    <output>Approval or rejection decision</output>
-  </typical_outputs>
-  <key_checkpoints>
-    <checkpoint>Code reviewed against standards</checkpoint>
-    <checkpoint>Issues categorised by severity</checkpoint>
-    <checkpoint>Recommendations documented</checkpoint>
-  </key_checkpoints>
-</category_guidance>
-```
-
-### 5.7 Documentation
-
-```xml
-<category_guidance name="documentation">
-  <purpose>Create project documentation</purpose>
-  <suggested_roles>
-    <role>Technical Writer with [domain] knowledge</role>
-    <role>Developer Advocate for API documentation</role>
-    <role>Senior Developer documenting architecture</role>
-  </suggested_roles>
-  <typical_outputs>
-    <output>README files</output>
-    <output>API documentation</output>
-    <output>Architecture documentation</output>
-    <output>Runbooks</output>
-  </typical_outputs>
-  <key_checkpoints>
-    <checkpoint>Target audience identified</checkpoint>
-    <checkpoint>Key sections drafted</checkpoint>
-    <checkpoint>Examples included</checkpoint>
-  </key_checkpoints>
-</category_guidance>
-```
+| Version | Date       | Changes                                            |
+| ------- | ---------- | -------------------------------------------------- |
+| 1.0     | 2026-01-06 | Initial rubric created from 01c, 01e, 01f patterns |
 
 ---
 
-## 6. Execution Workflow
+## Related Documents
 
-### 6.1 Starting a New Sequence
-
-```xml
-<workflow name="initialisation">
-  <step>Read prompts/manifest.yaml</step>
-  <step>Check if .work/progress.yaml exists</step>
-  <step>If not, create initial progress.yaml with meta section</step>
-  <step>Identify first prompt in execution order</step>
-  <step>Begin prompt execution</step>
-</workflow>
-```
-
-### 6.2 Resuming After Interruption
-
-```xml
-<workflow name="resume">
-  <step>Read .work/progress.yaml</step>
-  <step>Find last completed prompt from meta.last_prompt_completed</step>
-  <step>Check for any in_progress prompts</step>
-  <step>If in_progress exists, resume from current_step</step>
-  <step>Otherwise, proceed to next prompt in manifest</step>
-</workflow>
-```
-
-### 6.3 After Context Compaction
-
-```xml
-<workflow name="compaction_recovery">
-  <step>IMMEDIATELY read .work/progress.yaml</step>
-  <step>Read context_summary section for quick orientation</step>
-  <step>Load referenced persistent context files</step>
-  <step>Resume from last checkpoint</step>
-  <step>Do NOT rely on any information not in files</step>
-</workflow>
-```
-
----
-
-## 7. Checkpoint Guidelines
-
-### When to Write Checkpoints
-
-Write to `.work/progress.yaml` after:
-
-1. **Significant decisions** - Technology choices, architecture patterns, approach selections
-2. **Completed substeps** - Each numbered step in a prompt
-3. **Artifact creation** - When an output file is created
-4. **Error encounters** - Log failures for debugging
-5. **Context changes** - New information that affects future prompts
-
-### Checkpoint Format
-
-```yaml
-# In prompts.NNN.checkpoints
-- step: 2
-  completed_at: 2025-01-24T14:15:00Z
-  note: "Brief description of what was accomplished"
-  artifacts:
-    - path/to/created/file.ext
-  decisions:
-    - id: dNNN
-      description: "What was decided"
-      rationale: "Why"
-```
-
----
-
-## 8. Failure Handling Patterns
-
-### 8.1 Ambiguous Requirements
-
-```xml
-<on_failure>
-  <condition trigger="requirement is unclear or contradictory">
-    <action>Document the ambiguity in progress.yaml errors section</action>
-    <action>List possible interpretations</action>
-    <action>Mark prompt as blocked, not failed</action>
-    <escalation>Request human clarification before proceeding</escalation>
-  </condition>
-</on_failure>
-```
-
-### 8.2 Missing Prerequisites
-
-```xml
-<on_failure>
-  <condition trigger="required artifact or state not found">
-    <action>Check if prerequisite prompt was skipped</action>
-    <action>Log missing dependency in progress.yaml</action>
-    <escalation>Cannot proceed - prerequisite must complete first</escalation>
-  </condition>
-</on_failure>
-```
-
-### 8.3 Technical Errors
-
-```xml
-<on_failure>
-  <condition trigger="code doesn't compile, tests fail, etc">
-    <action>Log error details in progress.yaml</action>
-    <action>Attempt automated fix if pattern is recognised</action>
-    <action>After 2 failed attempts, pause and document</action>
-    <escalation>Request human review of error</escalation>
-  </condition>
-</on_failure>
-```
-
----
-
-## 9. .work Folder Placement Guidance
-
-Place `.work/` folders at the appropriate scope:
-
-| Scenario | Location | Example |
-|----------|----------|---------|
-| Single feature | Feature directory | `features/user-auth/.work/` |
-| Module-level work | Module root | `backend/.work/` |
-| Cross-cutting work | Project root | `.work/` |
-| Microservice | Service directory | `services/payment/.work/` |
-
-**Guidance:**
-- Keep `.work/` close to the code it relates to
-- Avoid deeply nested `.work/` folders
-- One active `.work/` per logical unit of work
-- Add `.work/` to `.gitignore` if state shouldn't be committed
-
----
-
-## 10. Example Prompt
-
-```markdown
-# 003 API Specification
-
-<prompt_metadata>
-  <id>003</id>
-  <name>api-specification</name>
-  <category>design</category>
-  <estimated_effort>medium</estimated_effort>
-</prompt_metadata>
-
-<prerequisites>
-  <prompt id="002">Technical design must be complete</prompt>
-  <artifact path="002-output-technical-design.md">Technical design document</artifact>
-  <state_check path=".work/progress.yaml" key="prompts.002.status" value="completed"/>
-</prerequisites>
-
-<role>
-  <identity>Senior API Architect</identity>
-  <expertise>REST API design, OpenAPI specification, HTTP semantics, 
-    authentication patterns, and API versioning strategies</expertise>
-  <mindset>Designs APIs from the consumer's perspective. Prioritises 
-    consistency, discoverability, and backwards compatibility. 
-    Questions unclear requirements before assuming intent.</mindset>
-</role>
-
-<context>
-  <persistent>
-    <file path="CLAUDE.md" sections="api-conventions"/>
-    <file path="docs/adr/002-rest-api-design.md"/>
-  </persistent>
-  <session>
-    <file path=".work/progress.yaml"/>
-  </session>
-  <inline>
-    This API serves a mobile application with offline-first requirements.
-  </inline>
-</context>
-
-<objective>
-  Define the REST API specification for all user management endpoints.
-</objective>
-
-<instructions>
-  <step id="1">
-    <action>Read .work/progress.yaml and 002-output-technical-design.md</action>
-    <checkpoint>Confirmed prerequisites met</checkpoint>
-  </step>
-  <step id="2">
-    <action>Identify all user management operations from requirements</action>
-    <checkpoint>operations_identified: [list of operations]</checkpoint>
-  </step>
-  <step id="3">
-    <action>Define endpoint paths, methods, request/response schemas</action>
-    <output artifact="003-output-api-spec.yaml">OpenAPI specification</output>
-    <checkpoint>endpoints_defined: true</checkpoint>
-  </step>
-  <step id="4">
-    <action>Document error responses and edge cases</action>
-    <checkpoint>error_handling_defined: true</checkpoint>
-  </step>
-  <step id="5">
-    <action>Verify specification against requirements</action>
-    <checkpoint>verified: true</checkpoint>
-  </step>
-</instructions>
-
-<outputs>
-  <artifact path="003-output-api-spec.yaml" type="specification">
-    OpenAPI 3.0 specification for user management API
-  </artifact>
-  <state_update>
-    prompts.003.status: completed
-    prompts.003.artifacts_created: ["003-output-api-spec.yaml"]
-    meta.last_prompt_completed: "003"
-  </state_update>
-</outputs>
-
-<verification>
-  <criterion>All user operations from requirements have corresponding endpoints</criterion>
-  <criterion>Request/response schemas are fully defined</criterion>
-  <criterion>Error responses cover authentication, validation, not-found cases</criterion>
-</verification>
-
-<on_failure>
-  <condition trigger="requirement ambiguity about user data model">
-    <action>Document ambiguity in progress.yaml</action>
-    <action>Propose reasonable default interpretation</action>
-    <escalation>If multiple valid interpretations, ask human to choose</escalation>
-  </condition>
-</on_failure>
-
-<next_prompts>
-  <prompt id="005" condition="default">Implementation</prompt>
-</next_prompts>
-```
-
----
-
-## 11. Self-Assessment Checklist
-
-Before finalising a generated prompt, verify:
-
-- [ ] Metadata complete (id, name, category, effort)
-- [ ] Role is specific and targeted (not generic "assistant")
-- [ ] Role expertise matches the task requirements
-- [ ] Role mindset describes how they approach problems
-- [ ] Prerequisites explicitly listed
-- [ ] Context references files, not embedded content
-- [ ] Objective is one clear sentence
-- [ ] Each step has an action and checkpoint
-- [ ] Outputs use NNN-prefix naming
-- [ ] Verification criteria are testable
-- [ ] Failure handling covers likely issues
-- [ ] State updates specified
-- [ ] Next prompts identified
-
----
-
-## 12. Integration with CLAUDE.md
-
-Add this section to your project's CLAUDE.md:
-
-```markdown
-## Prompt Execution
-
-This project uses structured prompts in `prompts/`.
-
-### Starting Work
-1. Read `prompts/manifest.yaml` for execution order
-2. Check `.work/progress.yaml` for current progress
-3. Execute prompts in order, respecting dependencies
-
-### After Compaction
-1. FIRST read `.work/progress.yaml`
-2. Load `context_summary` section for orientation
-3. Resume from last checkpoint
-
-### Checkpoint Discipline
-- Write to progress.yaml after every significant decision
-- Write to progress.yaml after completing each step
-- Never rely on context memory for important information
-```
+- 
