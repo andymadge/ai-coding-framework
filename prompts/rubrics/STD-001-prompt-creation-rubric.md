@@ -22,6 +22,7 @@ Use this document as a reference when creating new prompts or enhancing existing
 5. [Large File Handling Pattern](#large-file-handling-pattern)
 6. [Avoiding Arbitrary Limits Pattern](#avoiding-arbitrary-limits-pattern)
 7. [Progress Tracking Patterns](#progress-tracking-patterns)
+   - [Progress.yaml Consistency Rules](#progressyaml-consistency-rules)
 8. [Checkpoint Strategies](#checkpoint-strategies)
 9. [Begin Section Template](#begin-section-template)
 10. [Critical Reminders Template](#critical-reminders-template)
@@ -66,6 +67,7 @@ Use this document as a reference when creating new prompts or enhancing existing
 | **Complete Then Move**              | Finish one unit of work completely before starting another                                       |
 | **No Arbitrary Limits**             | NEVER use `head -N` or `tail -N` to limit file discovery; process ALL files or show count + warn |
 | **Separate Work from Deliverables** | `.work/` is for internal tracking; `docs/` is for final artifacts humans review                  |
+| **Consistent Progress Updates** | Update `progress.yaml` in sequence: detail status → pointers → status → work arrays → next_action → timestamp (see Progress.yaml Consistency Rules) |
 
 ### Checkpoint Triggers (Canonical List)
 
@@ -221,6 +223,16 @@ A well-structured Claude Code prompt follows this pattern:
   <progress_tracking_schema>
 ```yaml
 # progress.yaml - UPDATE AFTER EVERY SIGNIFICANT WORK UNIT
+#
+# CONSISTENCY RULES (6-step sequence):
+# 1. Update detail-level status FIRST (phases.*.status, tasks.*.status)
+# 2. Update top-level pointers SECOND (current_phase, current_step, current_task)
+# 3. Update overall status THIRD (status field)
+# 4. Update work arrays FOURTH (work_completed, work_in_progress, work_remaining)
+# 5. Update next_action FIFTH (must reference current pointers)
+# 6. Update last_updated ALWAYS
+# 7. Verify all 9 invariants hold (see Progress.yaml Consistency Rules)
+#
 progress:
   last_updated: "[ISO DateTime]"
   current_phase: "[Phase ID]"
@@ -674,9 +686,388 @@ progress:
     - "Documentation"
     
   blockers: []
-  
+
   next_action: "Complete Payment service implementation in phase 2, step 2.3. Read existing API from .work/payment-api.yaml and generate implementation."
+
+# CONSISTENCY CHECK (9 invariants):
+# ✓ current_phase="2" matches phases.phase_2.status="In Progress"
+# ✓ current_step="2.3" matches phases.phase_2.current_step="2.3"
+# ✓ next_action references "phase 2, step 2.3" (current pointers)
+# ✓ Only phase_2 has status="In Progress"
+# ✓ Completed phases (phase_1) have completed_at timestamps
+# ✓ work_completed contains completed phases/items
+# ✓ work_in_progress contains only current phase 2 work
+# ✓ work_remaining does not contain completed items
+# ✓ last_updated is present
 ```
+
+### Progress.yaml Consistency Rules
+
+#### The Consistency Problem
+
+Progress.yaml has **redundant fields by design** (top-level pointers + detail-level status + work tracking arrays). This redundancy enables fast resumption but creates risk of internal conflicts:
+
+```yaml
+# INCONSISTENT - DO NOT DO THIS (real example from production)
+progress:
+  current_task: "T7"                        # Says T7
+
+  tasks:
+    T6_client_interface:
+      status: "Complete"                     # T6 is complete
+      completed_at: "2026-01-27T20:04:00Z"
+    T7_client_success_path:
+      status: "Not Started"                  # CONFLICT: Says not started but is current!
+
+  work_in_progress:
+    - task: "T6"                             # CONFLICT: T6 is complete, not in progress!
+      status: "Starting Client Interface"
+
+  work_remaining:
+    - "T6: Client interface"                 # CONFLICT: T6 is complete, not remaining!
+    - "T7: Client success path"
+
+  work_completed:
+    - task: "T5"                             # CONFLICT: Missing T6 entirely!
+      completed_at: "2026-01-27T20:03:00Z"
+
+  next_action: "Create T6: CompaniesHouseClient interface..."  # CONFLICT: Should say T7!
+```
+
+**5 distinct conflicts** - When Claude reads this after context compaction, which field is truth?
+
+#### Single Source of Truth Principle
+
+**Detail-level status is always truth. Top-level pointers and arrays are derived.**
+
+| Field Type | Truth Level | Update Order | Purpose |
+|------------|-------------|--------------|---------|
+| `tasks.T7.status` | **SOURCE OF TRUTH** | **1st** | Authoritative state |
+| `phases.phase_X.status` | **SOURCE OF TRUTH** | **1st** | Authoritative state |
+| `levels.level_N.status` | **SOURCE OF TRUTH** | **1st** | Authoritative state |
+| `current_task` | Derived pointer | 2nd | Fast lookup only |
+| `current_phase` | Derived pointer | 2nd | Fast lookup only |
+| `current_step` | Derived pointer | 2nd | Fast lookup only |
+| `status` | Derived summary | 3rd | Overall status |
+| `work_completed` | Derived array | 4th | Completed items list |
+| `work_in_progress` | Derived array | 4th | Current items list |
+| `work_remaining` | Derived array | 4th | Remaining items list |
+| `next_action` | Derived instruction | 5th | Resumption guide |
+| `last_updated` | Metadata | **ALWAYS** | Audit trail |
+
+#### Update Sequence Rules
+
+**ALWAYS update progress.yaml fields in this order:**
+
+```yaml
+# STEP 1: Update detail-level status FIRST (source of truth)
+tasks:
+  T6_client_interface:
+    status: "Complete"                      # ← Update detail status FIRST
+    completed_at: "2026-01-27T20:04:00Z"   # ← Add timestamp
+  T7_client_success_path:
+    status: "In Progress"                   # ← Must match current_task pointer
+    started_at: "2026-01-27T20:05:00Z"     # ← Add timestamp
+
+# STEP 2: Update top-level pointers SECOND (must match step 1)
+current_task: "T7"                          # ← Points to task with "In Progress" status
+current_phase: "Phase 1 - Tasks"            # ← Phase containing T7
+
+# STEP 3: Update overall status THIRD (derived from all tasks)
+status: "In Progress"                       # ← Still work to do
+
+# STEP 4: Update work tracking arrays FOURTH (must be synchronized)
+work_completed:
+  - task: "T5"
+    completed_at: "2026-01-27T20:03:00Z"
+  - task: "T6"                              # ← Add T6 (it's complete)
+    completed_at: "2026-01-27T20:04:00Z"
+    commit: "abc123f"
+
+work_in_progress:
+  - task: "T7"                              # ← T7 now in progress (remove T6)
+    status: "Starting client implementation"
+
+work_remaining:
+  - "T7: Client success path"               # ← Remove T6 (it's complete)
+  - "T8: Client error handling"
+  - "T10: Integration tests"
+
+# STEP 5: Update next_action FIFTH (must reference step 2 pointers and current work)
+next_action: "Implement T7: CompaniesHouseClientImpl with getRegisteredAddress method. Follow success path from .work/t7-spec.yaml"
+                                            # ← References T7, NOT T6
+
+# STEP 6: Update timestamp ALWAYS
+last_updated: "2026-01-27T20:05:00Z"       # ← Every update gets new timestamp
+```
+
+#### Consistency Invariants (Must Always Hold)
+
+These rules **MUST be true** after every progress.yaml update:
+
+```yaml
+# INVARIANT 1: Top-level pointer matches detail-level status
+# If current_task = "T7"
+# Then tasks.T7.status MUST be "In Progress" (not "Not Started", not "Complete")
+
+# INVARIANT 2: next_action references current pointers
+# If current_task = "T7"
+# Then next_action MUST mention "T7" or describe T7 work (not T6, not T8)
+
+# INVARIANT 3: Overall status reflects task completion
+# If status = "Complete"
+# Then ALL tasks.*.status MUST be "Complete" or "Skipped"
+
+# INVARIANT 4: Completed tasks have completed_at timestamps
+# If tasks.T6.status = "Complete"
+# Then tasks.T6.completed_at MUST exist
+
+# INVARIANT 5: In-progress tasks match current pointer
+# If tasks.T7.status = "In Progress"
+# Then current_task MUST be "T7" (unless T7 is blocked)
+
+# INVARIANT 6: Only ONE task/phase can be "In Progress"
+# If tasks.T7.status = "In Progress"
+# Then ALL OTHER tasks.*.status MUST be "Complete", "Not Started", or "Skipped"
+
+# INVARIANT 7: work_completed contains ALL completed tasks
+# If tasks.T6.status = "Complete"
+# Then work_completed array MUST contain T6 entry
+
+# INVARIANT 8: work_in_progress contains ONLY current task
+# If current_task = "T7"
+# Then work_in_progress array MUST contain T7 entry
+# And work_in_progress MUST NOT contain T6 (or any other completed task)
+
+# INVARIANT 9: work_remaining does NOT contain completed tasks
+# If tasks.T6.status = "Complete"
+# Then work_remaining array MUST NOT contain "T6: ..." entry
+```
+
+#### Worked Example: Incorrect vs Correct Update
+
+**INCORRECT UPDATE (Creates 5 Conflicts):**
+
+Starting from T6 complete, moving to T7 - but updated inconsistently:
+
+```yaml
+# After completing T6, Claude only updates SOME fields:
+progress:
+  last_updated: "2026-01-27T20:04:00Z"
+  current_task: "T7"                        # ✓ Updated to T7
+  status: "In Progress"                     # ✓ Still in progress
+
+  tasks:
+    T6_client_interface:
+      status: "Complete"                     # ✓ Marked complete
+      completed_at: "2026-01-27T20:04:00Z"
+    T7_client_success_path:
+      status: "Not Started"                  # ⚠️ CONFLICT 1: Says not started but current_task=T7!
+
+  work_completed:
+    - task: "T5"                             # ⚠️ CONFLICT 2: Missing T6!
+      completed_at: "2026-01-27T20:03:00Z"
+
+  work_in_progress:
+    - task: "T6"                             # ⚠️ CONFLICT 3: T6 is complete, not in progress!
+      status: "Starting Client Interface"
+
+  work_remaining:
+    - "T6: Client interface"                 # ⚠️ CONFLICT 4: T6 is complete, not remaining!
+    - "T7: Client success path"
+
+  next_action: "Create T6: CompaniesHouseClient interface..."  # ⚠️ CONFLICT 5: Should say T7!
+```
+
+**Result:** Inconsistent state. After compaction, Claude doesn't know:
+- Is T7 started or not started?
+- Is T6 still in progress or complete?
+- What should be done next - T6 or T7?
+
+**CORRECT UPDATE (Follows 6-Step Sequence):**
+
+```yaml
+# After completing T6, Claude updates in CORRECT SEQUENCE:
+progress:
+  # STEP 6: Update timestamp ALWAYS
+  last_updated: "2026-01-27T20:05:00Z"     # ← New timestamp for this update
+
+  # STEP 2: Update top-level pointer SECOND
+  current_task: "T7"                        # ← Points to T7 (matches T7 status)
+  current_phase: "Phase 1 - Tasks"
+
+  # STEP 3: Update overall status THIRD
+  status: "In Progress"                     # ← Still work to do (more tasks remain)
+
+  # STEP 1: Update detail-level status FIRST
+  tasks:
+    T6_client_interface:
+      status: "Complete"                     # ✓ SOURCE OF TRUTH updated first
+      completed_at: "2026-01-27T20:04:00Z"  # ✓ Completion timestamp
+    T7_client_success_path:
+      status: "In Progress"                  # ✓ Now in progress (matches current_task)
+      started_at: "2026-01-27T20:05:00Z"    # ✓ Start timestamp
+
+  # STEP 4: Update work arrays FOURTH (synchronized with detail status)
+  work_completed:
+    - task: "T5"
+      completed_at: "2026-01-27T20:03:00Z"
+      commit: "147524a"
+    - task: "T6"                             # ✓ T6 added (source of truth says Complete)
+      completed_at: "2026-01-27T20:04:00Z"
+      commit: "8f4e2c1"
+
+  work_in_progress:
+    - task: "T7"                             # ✓ T7 now in progress (T6 removed)
+      status: "Implementing CompaniesHouseClientImpl"
+
+  work_remaining:
+    - "T7: Client success path"              # ✓ T6 removed (it's complete)
+    - "T8: Client error handling"
+    - "T10: Integration tests"
+    - "T11: Documentation"
+
+  blockers: []
+
+  # STEP 5: Update next_action FIFTH (references current pointers)
+  next_action: "Implement T7: Create CompaniesHouseClientImpl with getRegisteredAddress method. Follow API from T6 interface and success path specs."
+                                             # ✓ References T7, NOT T6
+
+# INVARIANTS CHECK:
+# ✓ 1. current_task="T7" matches tasks.T7.status="In Progress"
+# ✓ 2. next_action mentions "T7"
+# ✓ 3. status="In Progress" with incomplete tasks remaining
+# ✓ 4. T6 has completed_at timestamp
+# ✓ 5. T7 status="In Progress" matches current_task="T7"
+# ✓ 6. Only T7 has status="In Progress"
+# ✓ 7. work_completed contains T6 (and all completed tasks)
+# ✓ 8. work_in_progress contains only T7 (not T6)
+# ✓ 9. work_remaining does not contain T6
+```
+
+**Result:** All fields are synchronized. After compaction, Claude knows exactly:
+- T7 is in progress (source of truth + pointer + arrays all agree)
+- T6 is complete (in work_completed, not in work_in_progress or work_remaining)
+- Next action is to work on T7 (next_action references T7)
+
+#### Transition Example: Clean Phase Boundary
+
+**Completing Phase 2 and Moving to Phase 3:**
+
+```yaml
+# Before transition (working on phase 2, step 2.3)
+progress:
+  last_updated: "2025-01-06T14:00:00Z"
+  current_phase: "2"
+  current_step: "2.3"
+  status: "In Progress"
+
+  phases:
+    phase_1:
+      status: "Complete"
+      completed_at: "2025-01-06T13:00:00Z"
+    phase_2:
+      status: "In Progress"                   # ← Currently working here
+      current_step: "2.3"
+      steps_completed: ["2.1", "2.2"]
+    phase_3:
+      status: "Not Started"                   # ← Next phase
+
+  work_completed:
+    - item: "Phase 1 - Discovery"
+      completed_at: "2025-01-06T13:00:00Z"
+    - item: "Phase 2, Step 2.1 - Design"
+      completed_at: "2025-01-06T13:30:00Z"
+    - item: "Phase 2, Step 2.2 - Implementation"
+      completed_at: "2025-01-06T13:50:00Z"
+
+  work_in_progress:
+    - item: "Phase 2, Step 2.3 - Testing"
+      status: "Writing integration tests"
+
+  work_remaining:
+    - "Phase 2, Step 2.3 - Testing"
+    - "Phase 3 - Deployment"
+
+  next_action: "Complete step 2.3 - write integration tests for Payment service"
+
+# After completing step 2.3 (LAST step of phase 2) - 6-STEP SEQUENCE:
+
+# STEP 1: Update detail-level status FIRST
+  phases:
+    phase_2:
+      status: "Complete"                      # ← Mark phase 2 complete
+      completed_at: "2025-01-06T14:30:00Z"   # ← Add timestamp
+      steps_completed: ["2.1", "2.2", "2.3"] # ← Add final step
+    phase_3:
+      status: "In Progress"                   # ← Start phase 3
+      started_at: "2025-01-06T14:30:00Z"     # ← Add timestamp
+      current_step: "3.1"                     # ← Detail-level pointer
+
+# STEP 2: Update top-level pointers SECOND
+  current_phase: "3"                          # ← Now points to phase 3
+  current_step: "3.1"                         # ← First step of phase 3
+
+# STEP 3: Update overall status THIRD
+  status: "In Progress"                       # ← Still work to do
+
+# STEP 4: Update work arrays FOURTH
+  work_completed:
+    - item: "Phase 1 - Discovery"
+      completed_at: "2025-01-06T13:00:00Z"
+    - item: "Phase 2, Step 2.1 - Design"
+      completed_at: "2025-01-06T13:30:00Z"
+    - item: "Phase 2, Step 2.2 - Implementation"
+      completed_at: "2025-01-06T13:50:00Z"
+    - item: "Phase 2, Step 2.3 - Testing"    # ← Add completed step
+      completed_at: "2025-01-06T14:30:00Z"
+
+  work_in_progress:
+    - item: "Phase 3, Step 3.1 - Design"     # ← Phase 3 work (phase 2 removed)
+      status: "Starting notification service architecture"
+
+  work_remaining:
+    - "Phase 3, Step 3.1 - Design"           # ← Phase 2 removed
+    - "Phase 3, Step 3.2 - Implementation"
+    - "Phase 3, Step 3.3 - Testing"
+
+# STEP 5: Update next_action FIFTH
+  next_action: "Begin phase 3, step 3.1 - design Notification service architecture. Read requirements from .work/phase3-requirements.yaml"
+                                             # ← References phase 3, step 3.1
+
+# STEP 6: Update timestamp ALWAYS
+  last_updated: "2025-01-06T14:30:00Z"       # ← Matches transition time
+```
+
+**Result:** Clean transition with no conflicts. All fields are synchronized at phase boundary.
+
+#### Self-Validation Checklist
+
+Before writing progress.yaml, verify:
+
+- [ ] **Step 1 Complete:** Detail-level status updated FIRST (tasks.*.status or phases.*.status)
+- [ ] **Step 2 Complete:** Top-level pointers updated SECOND (current_task, current_phase, current_step)
+- [ ] **Step 3 Complete:** Overall status updated THIRD (status field reflects all work)
+- [ ] **Step 4 Complete:** Work arrays synchronized FOURTH (work_completed, work_in_progress, work_remaining)
+- [ ] **Step 5 Complete:** next_action updated FIFTH (references current pointers and describes next work)
+- [ ] **Step 6 Complete:** Timestamp updated ALWAYS (last_updated is current)
+- [ ] **Invariants Check:** All 9 invariants hold (detail matches pointers, arrays synchronized, next_action accurate)
+- [ ] **No Orphans:** No task appears in multiple conflicting states (both complete and in_progress)
+
+#### Common Mistakes to Avoid
+
+| Mistake | Why It's Wrong | Correct Approach |
+|---------|----------------|------------------|
+| Update current_task first, detail status later | Creates inconsistent window where pointer doesn't match source of truth | Update detail status FIRST, then pointers |
+| Leave old task in work_in_progress when moving on | Multiple tasks appear active | Remove completed task from work_in_progress, add to work_completed |
+| Forget to add completed task to work_completed | work_completed doesn't reflect actual completed work | Always add completed tasks to work_completed array with timestamp |
+| next_action references previous task | Causes Claude to repeat completed work | Update next_action to reference current pointers (current_task, current_phase) |
+| Forget to update timestamp | Can't tell when checkpoint was made | ALWAYS update last_updated |
+| Copy-paste checkpoint without updating all fields | Creates conflicts like T6 marked complete but still in work_remaining | Follow 6-step sequence EVERY time - no shortcuts |
+| Update only current_task, ignore detail status | Source of truth (tasks.T7.status) is stale | Update detail-level status FIRST, then derive pointers from it |
+| Remove task from work_remaining but not add to work_completed | Task disappears from tracking entirely | Completed tasks move from work_remaining → work_completed (don't delete) |
+
+---
 
 ### Task-Specific Progress Extensions
 
@@ -734,7 +1125,7 @@ Summary of checkpoint actions:
 | Time-based checkpoints (5-10 min) | Quick progress.yaml update with current state |
 | Pre-operation checkpoints | Save current state before starting risky work |
 | Discovery checkpoints | Write findings to appropriate file immediately |
-| Transition checkpoints | Update phase status, document next_action clearly |
+| Transition checkpoints | Update phase status, document next_action clearly, **verify consistency** (see Progress.yaml Consistency Rules) |
 
 ### Checkpoint File Naming
 
@@ -846,6 +1237,15 @@ Use this template for the `<critical_reminders>` section:
    - Resume from next_action if exists
    - Never restart completed work
 
+2a. **UPDATE PROGRESS.YAML CONSISTENTLY (6-step sequence)**
+   - Update detail-level status FIRST (tasks.T7.status, phases.phase_2.status)
+   - Update top-level pointers SECOND (current_task, current_phase)
+   - Update overall status THIRD (status field)
+   - Update work arrays FOURTH (work_completed, work_in_progress, work_remaining)
+   - Update next_action FIFTH (must reference current pointers)
+   - Update last_updated ALWAYS
+   - Verify all 9 invariants hold (see Progress.yaml Consistency Rules)
+
 3. **LARGE FILES NEED CHUNKING**
    - Files >100KB require chunked reading
    - Summarise to .work/ as you go
@@ -942,6 +1342,23 @@ cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
 - ✅ After discovering significant findings (capture insights immediately)
 - ✅ Before phase/level/step transitions (clean resumption points)
 
+### Progress.yaml Update Sequence (6 Steps)
+1. Detail-level status (tasks.T7.status, phases.phase_2.status) ← **SOURCE OF TRUTH**
+2. Top-level pointers (current_task, current_phase, current_step)
+3. Overall status (status field)
+4. Work arrays (work_completed, work_in_progress, work_remaining) ← **MUST SYNC**
+5. next_action (must reference step 2 pointers)
+6. Timestamp (last_updated) ← **ALWAYS**
+
+**Rule:** Detail → Pointers → Status → Arrays → next_action → Timestamp
+
+**Arrays must be synchronized:**
+- work_completed: Add completed task, remove from in_progress
+- work_in_progress: Add current task, remove completed
+- work_remaining: Remove completed task
+
+**See:** Progress.yaml Consistency Rules section for full details and examples
+
 ### Memory Patterns
 1. Summarise then discard
 2. Reference not re-read
@@ -954,6 +1371,7 @@ cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
 
 | Version | Date       | Changes                                            |
 | ------- | ---------- | -------------------------------------------------- |
+| 1.2     | 2026-01-28 | Added Progress.yaml Consistency Rules; defined 6-step update sequence, source of truth, 9 invariants including work array synchronization |
 | 1.1     | 2026-01-28 | Consolidated checkpoint trigger guidance into canonical list; resolved inconsistencies in progress.yaml update timing |
 | 1.0     | 2026-01-06 | Initial rubric created from 01c, 01e, 01f patterns |
 
