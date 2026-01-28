@@ -68,6 +68,7 @@ Use this document as a reference when creating new prompts or enhancing existing
 | **No Arbitrary Limits**             | NEVER use `head -N` or `tail -N` to limit file discovery; process ALL files or show count + warn |
 | **Separate Work from Deliverables** | `.work/` is for internal tracking; `docs/` is for final artifacts humans review                  |
 | **Single Source of Truth** | Store task status once in `tasks` map; derive work arrays on read, never store (see Progress.yaml Format) |
+| **Version Control .work/** | `.work/` MUST be committed to git; enables team collaboration and machine switching |
 
 ### Checkpoint Triggers (Canonical List)
 
@@ -91,12 +92,12 @@ Update `progress.yaml` in these situations:
 
 ### Directory Purposes
 
-| Directory              | Purpose                                | Visibility             | Contents                                        |
-| ---------------------- | -------------------------------------- | ---------------------- | ----------------------------------------------- |
-| **`.work/`**           | Internal tracking, compaction survival | Hidden (dot directory) | `progress.yaml`, inventories, intermediate data |
-| **`docs/qa-reports/`** | QA analysis deliverables               | Visible, reviewable    | `*-REPORT.md` files                             |
-| **`docs/analysis/`**   | Code analysis deliverables             | Visible, reviewable    | Analysis reports, findings                      |
-| **`docs/sysdocs/`**    | System documentation                   | Visible, reviewable    | Architecture, API, onboarding docs              |
+| Directory              | Purpose                                | Visibility             | Version Control | Contents                                        |
+| ---------------------- | -------------------------------------- | ---------------------- | --------------- | ----------------------------------------------- |
+| **`.work/`**           | Internal tracking, compaction survival | Hidden (dot directory) | **COMMIT TO GIT** | `progress.yaml`, inventories, intermediate data |
+| **`docs/qa-reports/`** | QA analysis deliverables               | Visible, reviewable    | Commit to git | `*-REPORT.md` files                             |
+| **`docs/analysis/`**   | Code analysis deliverables             | Visible, reviewable    | Commit to git | Analysis reports, findings                      |
+| **`docs/sysdocs/`**    | System documentation                   | Visible, reviewable    | Commit to git | Architecture, API, onboarding docs              |
 
 ### Standard QA Output Structure
 
@@ -117,10 +118,15 @@ repository/
 
 ### Why This Matters
 
-1. **Dot directories are hidden** - Users won't find reports in file explorers
-2. **Source control** - Reports in `docs/` can be committed and tracked
+1. **Dot directories are hidden** - Users won't find reports in file explorers, but `.work/` is for progress tracking not deliverables
+2. **Source control** - Both `.work/` and `docs/` MUST be committed to git:
+   - `.work/progress.yaml` enables checkpoint recovery across machines and team members
+   - Switching machines or developers requires access to same progress state
+   - Without version control, checkpoint discipline breaks down
 3. **CI/CD integration** - Pipelines can publish `docs/` artifacts easily
-4. **Clear separation** - Working state vs deliverables are obviously different
+4. **Clear separation** - Working state (`.work/`) vs deliverables (`docs/`) are obviously different
+
+**Important:** Unlike typical temporary directories, `.work/` should NOT be in `.gitignore`. It contains the single source of truth for task state and must be shared across the team.
 
 ---
 
@@ -185,6 +191,7 @@ A well-structured Claude Code prompt follows this pattern:
     <path>[OUTPUT_DIR]/.work/</path>
     <purpose>Persistent work state that survives context compaction</purpose>
     <critical>Create this directory FIRST before any other work</critical>
+    <version_control>MUST be committed to git - enables team collaboration and machine switching</version_control>
     
     <required_files>
       <file name="progress.yaml">
@@ -1039,6 +1046,7 @@ Use this template for the `<critical_reminders>` section:
    - progress.yaml is truth
    - Context may compact any time
    - Checkpoint: after completions, every 5-10 min, before risky ops, after findings, before transitions
+   - `.work/` directory MUST be committed to git for team collaboration and machine switching
 
 2. **CHECK BEFORE STARTING**
    - Always read progress.yaml first
@@ -1175,6 +1183,7 @@ cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
 
 | Version | Date       | Changes                                            |
 | ------- | ---------- | -------------------------------------------------- |
+| 1.4     | 2026-01-28 | Clarified that `.work/` directories MUST be committed to git for team collaboration and machine switching |
 | 1.3     | 2026-01-28 | Redesigned progress.yaml format (single source of truth); work arrays derived on read; 2-step update pattern |
 | 1.1     | 2026-01-28 | Consolidated checkpoint trigger guidance into canonical list; resolved inconsistencies in progress.yaml update timing |
 | 1.0     | 2026-01-06 | Initial rubric created from 01c, 01e, 01f patterns |
