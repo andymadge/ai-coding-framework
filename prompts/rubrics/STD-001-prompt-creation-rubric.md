@@ -16,6 +16,7 @@ Use this document as a reference when creating new prompts or enhancing existing
 
 1. [When to Use These Patterns](#when-to-use-these-patterns)
 2. [Core Principles](#core-principles)
+   - [Checkpoint Triggers (Canonical List)](#checkpoint-triggers-canonical-list)
 3. [Prompt Structure Template](#prompt-structure-template)
 4. [Context Compaction Survival Pattern](#context-compaction-survival-pattern)
 5. [Large File Handling Pattern](#large-file-handling-pattern)
@@ -57,7 +58,7 @@ Use this document as a reference when creating new prompts or enhancing existing
 | Principle                           | Description                                                                                      |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ |
 | **Disk Over Memory**                | Write everything to `.work/` directory; context will be lost but disk persists                   |
-| **Progress After Every Unit**       | Update `progress.yaml` after every significant work unit to enable resumption                    |
+| **Progress After Every Unit**       | Update `progress.yaml` after completing work AND before risky operations (see Checkpoint Triggers below) |
 | **Summarise Then Discard**          | For large files: read chunk → extract key info → write summary → forget chunk                    |
 | **Reference Not Re-read**           | Once summarised, reference the summary file; only re-read original for quotes                    |
 | **Clear Next Action**               | Always document exactly what to do next for cold resumption                                      |
@@ -65,6 +66,20 @@ Use this document as a reference when creating new prompts or enhancing existing
 | **Complete Then Move**              | Finish one unit of work completely before starting another                                       |
 | **No Arbitrary Limits**             | NEVER use `head -N` or `tail -N` to limit file discovery; process ALL files or show count + warn |
 | **Separate Work from Deliverables** | `.work/` is for internal tracking; `docs/` is for final artifacts humans review                  |
+
+### Checkpoint Triggers (Canonical List)
+
+Update `progress.yaml` in these situations:
+
+| Trigger Type | When | Examples |
+|--------------|------|----------|
+| **Completion checkpoints** | After completing any significant work unit | Phase done, level done, file processed, document created, spec written |
+| **Time-based checkpoints** | Every 5-10 minutes of active work | Regardless of completion state, save progress periodically |
+| **Pre-operation checkpoints** | Before starting any complex/risky operation | Before multi-step refactor, before bulk file operations, before data transformations |
+| **Discovery checkpoints** | After discovering significant findings | Critical issue found, unexpected pattern detected, blocker identified |
+| **Transition checkpoints** | Before moving to next phase/level/step | Enables clean resumption at phase boundaries |
+
+**Rule of thumb:** If you would be frustrated to lose this progress after context compaction, checkpoint NOW.
 
 ---
 
@@ -269,15 +284,17 @@ progress:
      - Update progress.yaml immediately
      - Write next_action clearly for potential resumption
      
-  5. CHECKPOINT REQUIREMENTS:
-     - After EVERY [major deliverable created]
-     - After EVERY [phase/level] completed
-     - After EVERY [significant milestone]
-     - Before ANY [complex operation]
+  5. CHECKPOINT REQUIREMENTS (see Checkpoint Triggers in Core Principles):
+     - After completing any [significant work unit]
+     - Every 5-10 minutes of active work
+     - Before starting any complex/risky operation
+     - After discovering significant findings
+     - Before transitions to next [phase/level/step]
   </resumption_protocol>
   
   <compaction_safe_practices>
-    <practice>Write progress.yaml after EVERY [significant work unit]</practice>
+    <practice>Write progress.yaml using canonical Checkpoint Triggers (see Core Principles)</practice>
+    <practice>Always checkpoint: after completions, every 5-10 min, before risky operations</practice>
     <practice>Write summaries to disk, don't keep in context memory</practice>
     <practice>Reference .work/ files instead of re-reading large sources</practice>
     <practice>Complete one [unit] fully before starting another</practice>
@@ -707,13 +724,17 @@ phases:
 
 ### When to Checkpoint
 
-| Event                          | Action                               |
-| ------------------------------ | ------------------------------------ |
-| Phase/Level/Step completed     | Update progress.yaml, write summary  |
-| Major deliverable created      | Update progress.yaml, note file path |
-| Significant finding discovered | Write to findings file immediately   |
-| Before complex operation       | Save current state                   |
-| After 5-10 minutes of work     | Quick progress.yaml update           |
+**See canonical Checkpoint Triggers in Core Principles section above.**
+
+Summary of checkpoint actions:
+
+| Trigger Type | Action |
+| ------------ | ------ |
+| Completion checkpoints | Update progress.yaml with completed status, write summary |
+| Time-based checkpoints (5-10 min) | Quick progress.yaml update with current state |
+| Pre-operation checkpoints | Save current state before starting risky work |
+| Discovery checkpoints | Write findings to appropriate file immediately |
+| Transition checkpoints | Update phase status, document next_action clearly |
 
 ### Checkpoint File Naming
 
@@ -764,8 +785,14 @@ CRITICAL: COMPACTION SURVIVAL
 =====================================
 This work WILL span multiple context compactions.
 
+CHECKPOINT PROGRESS.YAML:
+- After completing any significant work unit
+- Every 5-10 minutes of active work
+- Before starting complex/risky operations
+- After discovering significant findings
+- Before transitions to next phase/level/step
+
 ALWAYS:
-- Write progress to .work/progress.yaml after each significant step
 - Write summaries to .work/ directories, not to context memory
 - Complete one unit of work fully before starting another
 - Document next_action clearly for resumption
@@ -812,7 +839,7 @@ Use this template for the `<critical_reminders>` section:
 1. **STATE IN FILES, NOT CONTEXT**
    - progress.yaml is truth
    - Context may compact any time
-   - Checkpoint after every [significant unit]
+   - Checkpoint: after completions, every 5-10 min, before risky ops, after findings, before transitions
 
 2. **CHECK BEFORE STARTING**
    - Always read progress.yaml first
@@ -908,11 +935,12 @@ cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
 - Medium: 50-100KB → Monitor for truncation
 - Large: > 100KB → **Chunk required**
 
-### Checkpoint Triggers
-- After every major deliverable
-- After every phase/level complete
-- After every 5-10 minutes of work
-- Before any complex operation
+### Checkpoint Triggers (Update progress.yaml)
+- ✅ After completing work units (phases, levels, files, documents)
+- ✅ Every 5-10 minutes of active work (time-based safety net)
+- ✅ Before complex/risky operations (pre-operation safety)
+- ✅ After discovering significant findings (capture insights immediately)
+- ✅ Before phase/level/step transitions (clean resumption points)
 
 ### Memory Patterns
 1. Summarise then discard
@@ -926,6 +954,7 @@ cat [OUTPUT_DIR]/.work/progress.yaml 2>/dev/null || echo "NO_PROGRESS_FILE"
 
 | Version | Date       | Changes                                            |
 | ------- | ---------- | -------------------------------------------------- |
+| 1.1     | 2026-01-28 | Consolidated checkpoint trigger guidance into canonical list; resolved inconsistencies in progress.yaml update timing |
 | 1.0     | 2026-01-06 | Initial rubric created from 01c, 01e, 01f patterns |
 
 ---
