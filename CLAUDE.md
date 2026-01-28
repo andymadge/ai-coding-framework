@@ -10,7 +10,7 @@ This is an AI Coding Framework—a reusable template and methodology for orchest
 
 ## Core Architecture
 
-**State Persistence**: All important information is persisted to `.work/progress.yaml` and artifacts are saved to disk. This enables recovery from context compaction without relying on conversation history.
+**State Persistence**: All important information is persisted to `.work/progress.yaml` using single source of truth format. Task status is stored once in the `tasks` map; work arrays are derived on read, not stored. This eliminates synchronization conflicts and enables reliable recovery from context compaction without relying on conversation history.
 
 **Manifest-Driven Execution**: Prompts are orchestrated via `manifest.yaml` which defines execution order, dependencies, and conditional branching.
 
